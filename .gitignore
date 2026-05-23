@@ -1,0 +1,23 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Dataset files are provided locally and must not be uploaded.
+codes/dataset/
+
+# Trained weights, logs, and generated figures should be linked separately.
+codes/best_models/
+codes/analysis_outputs/
+codes/experiment_logs/
+
+# Local build outputs.
+output/
+report/build/
+report/overleaf/
+tmp/
+*.zip
+
+# Local handout/exploration files not needed for code reproduction.
+project_1.pdf
+codes/dataset_explore.ipynb

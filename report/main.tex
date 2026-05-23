@@ -29,10 +29,6 @@
 \begin{document}
 \maketitle
 
-\begin{abstract}
-This report presents a NumPy-only implementation of basic neural-network components for MNIST handwritten digit classification. I implemented the linear layer forward and backward passes, softmax cross-entropy, a 2D convolution operator, max pooling, MLP and CNN models, SGD, momentum gradient descent, and learning-rate schedulers. The MLP baseline reaches 94.59\% test accuracy. Under a fair momentum-based training setting, the MLP reaches 96.80\% test accuracy, while the CNN reaches 98.46\% test accuracy. I further study optimization and error analysis with visualizations.
-\end{abstract}
-
 \section*{Submission Links}
 \begin{itemize}
   \item Code repository: \url{\githuburl}
@@ -60,6 +56,12 @@ L=-\frac{1}{N}\sum_{i=1}^{N}\log
 \]
 implemented with max-shifted logits for numerical stability.
 
+The loss layer includes the softmax operation internally rather than expecting probabilities from the model. This avoids applying softmax twice and keeps the model output as raw logits. For each sample, the implementation subtracts the maximum logit before exponentiation. This does not change the softmax result, but prevents overflow when a logit becomes large during training. The backward pass returns
+\[
+\frac{\partial L}{\partial z_{i,c}}=\frac{p_{i,c}-\mathbf{1}\{c=y_i\}}{N},
+\]
+which is then propagated through the final linear layer and the earlier layers. I verified the core operators with unit tests covering output shapes, finite losses, gradient shapes, max-pool routing, and training-step parameter updates.
+
 \subsection{Model and Training}
 The baseline MLP uses the architecture
 \[
@@ -68,6 +70,8 @@ The baseline MLP uses the architecture
 with ReLU activation after the hidden layer. The training set is split into 50,000 training images and 10,000 validation images using a fixed random seed. Images are normalized to $[0,1]$.
 
 The baseline is trained for 5 epochs with batch size 64, SGD, initial learning rate 0.06, and MultiStepLR milestones at 800, 2400, and 4000 iterations.
+
+The MLP baseline has 203,530 trainable parameters. Since the image is flattened before entering the network, the model has no built-in notion of neighboring pixels. It can still learn digit templates because MNIST is clean and centered, but any spatial regularity must be learned through dense weights. This makes the MLP a useful baseline: it tests whether the implemented linear, ReLU, loss, optimizer, scheduler, and training loop work before adding image-specific structure.
 
 \begin{figure}[H]
   \centering
@@ -91,7 +95,9 @@ The final CNN architecture is
 \]
 
 \subsection{Fair Comparison}
-To compare the MLP and CNN under similar training conditions, both models are trained for 5 epochs with batch size 64, momentum gradient descent, initial learning rate 0.02, and the same MultiStepLR milestones.
+To compare the MLP and CNN under similar training conditions, both models are trained for 5 epochs with batch size 64, momentum gradient descent, initial learning rate 0.02, and the same MultiStepLR milestones. The same train/validation split, normalization, metric, loss, random seed, and evaluation script are used. The intended comparison target is the model architecture, so the optimizer family and schedule are fixed.
+
+The comparison is not a strict parameter-count match: the MLP has 203,530 trainable parameters, while the CNN has 347,690. The CNN has more parameters mainly because the pooled feature map has size $16\times13\times13=2704$ before the first fully connected layer. However, the CNN also has a stronger image prior. Its convolution filters are shared over locations, so the same local stroke detector can fire in many parts of an image. This is different from the MLP, where a stroke at two locations must be represented by different input weights.
 
 \begin{table}[H]
 \centering
@@ -120,14 +126,29 @@ CNN fair setting & Momentum + MultiStepLR & 5 & 0.9855 & 0.9846 \\
     \includegraphics[width=\linewidth]{figures/cnn_momentum_curve.png}
     \caption{CNN fair setting}
   \end{subfigure}
-  \caption{Fair MLP-vs-CNN comparison under the same optimizer family, batch size, epoch count, and scheduler.}
+\caption{Fair MLP-vs-CNN comparison under the same optimizer family, batch size, epoch count, and scheduler.}
 \end{figure}
 
-The CNN performs better than the MLP in both validation and test accuracy. This matches the expected inductive bias: handwritten digits contain local stroke patterns and spatial structure. The convolution layer shares filters across image locations, making it easier to learn translation-tolerant local features. Max pooling further reduces sensitivity to small shifts. In contrast, the MLP treats each pixel position as an independent input dimension and has to learn spatial patterns from fully connected weights.
+The CNN performs better than the MLP in both validation and test accuracy. The fair MLP reaches 96.80\% test accuracy, while the CNN reaches 98.46\%, an absolute improvement of 1.66 percentage points. This is meaningful on MNIST because many easy samples are already solved by both models; the gain comes mostly from harder samples with slight shifts, unusual stroke thickness, or incomplete loops.
+
+The result matches the expected inductive bias. Handwritten digits are made from local strokes: short horizontal bars, vertical stems, curves, corners, and closed loops. A convolution layer learns these local patterns with shared kernels, then reuses them across spatial positions. Max pooling reduces sensitivity to small translations and local deformations by keeping the strongest activation in each $2\times2$ region. The MLP instead receives a flat vector and treats each pixel coordinate independently. It can learn similar ideas, but it must encode them through dense global templates, which is less data-efficient for image structure.
+
+The training curves also support this interpretation. The momentum MLP improves over the baseline but has a larger gap to the CNN throughout training. The CNN reaches a higher validation accuracy without changing the optimizer or using extra data. This suggests that the architecture, not only the optimizer, contributes to the final improvement.
 
 \section{Additional Direction 1: Optimization}
 
 I studied momentum as an optimization modification. To isolate the effect of momentum, I compared two MLPs with the same architecture, same initial learning rate 0.02, same batch size, same 5 epochs, and the same MultiStepLR schedule. The only changed factor is the optimizer.
+
+Plain SGD updates parameters by
+\[
+\theta_{t+1}=\theta_t-\eta \nabla_\theta L_t.
+\]
+Momentum keeps a velocity term:
+\[
+v_{t+1}=\mu v_t-\eta \nabla_\theta L_t,\qquad
+\theta_{t+1}=\theta_t+v_{t+1}.
+\]
+The velocity averages recent gradient directions. When consecutive mini-batches agree, updates become larger along the stable descent direction. When gradients oscillate, especially across narrow valleys, opposite components partly cancel. This is why momentum can improve both convergence speed and final validation accuracy even when the learning-rate schedule is unchanged.
 
 \begin{table}[H]
 \centering
@@ -157,12 +178,16 @@ Momentum + MultiStepLR & 0.02 & 0.9657 & 0.9680 \\
   \caption{Optimization comparison for the MLP.}
 \end{figure}
 
-Momentum improves convergence substantially. It accumulates a velocity term, which helps continue updates along consistent descent directions and reduces oscillation in noisy mini-batch gradients. Under the same learning rate and schedule, momentum improves test accuracy from 92.38\% to 96.80\%.
+Momentum improves convergence substantially. Under the same learning rate and schedule, test accuracy improves from 92.38\% to 96.80\%, a 4.42 percentage-point gain. The SGD curve improves slowly because lr=0.02 is conservative for plain SGD in this setting. Momentum compensates by accumulating useful directions over many mini-batches, so it reaches a stronger region of the loss surface within the same 5-epoch budget.
+
+This experiment also explains why optimizer choice must be controlled in the MLP-vs-CNN comparison. If the CNN were compared only against the weaker SGD MLP, the architecture benefit would be exaggerated. By first improving the MLP with momentum, the final CNN comparison becomes stricter: CNN must beat a reasonably trained MLP, not a poorly optimized baseline.
 
 \section{Additional Direction 2: Error Analysis and Visualization}
 
 \subsection{Confusion Matrices}
 The MLP baseline and final CNN confusion matrices are shown below. The MLP baseline most often confuses visually similar pairs such as $9\rightarrow4$, $5\rightarrow3$, $7\rightarrow2$, $4\rightarrow9$, and $2\rightarrow8$. The CNN reduces most of these errors; its remaining mistakes are concentrated on ambiguous handwriting such as $9\rightarrow7$, $7\rightarrow2$, and $5\rightarrow3$.
+
+These error pairs are not random. The pairs $4/9$ and $7/2$ depend on small stroke details: a weak loop can turn a $9$ into something closer to $4$, while a curved lower stroke can make $2$ resemble $7$. The pair $3/5$ depends on the middle stroke and the openness of the top curve. The pair $2/8$ appears when the lower curve of $2$ is thick or closed. Because these differences are local, convolutional filters are better suited to detect them than a single global vector representation.
 
 \begin{figure}[H]
   \centering
@@ -182,6 +207,8 @@ The MLP baseline and final CNN confusion matrices are shown below. The MLP basel
 \subsection{Misclassified Examples}
 The misclassified examples show that many remaining errors are understandable even for humans: some digits have weak strokes, unusual writing styles, or shapes that resemble another class. For example, $4$ and $9$ share a loop-and-stem structure, while $3$, $5$, and $8$ can look similar when strokes are connected or missing.
 
+Comparing the two panels gives a more concrete picture than accuracy alone. The MLP baseline often fails when the whole digit shape is slightly displaced or when the class-defining evidence is small. The CNN still makes mistakes, but many of them are genuinely ambiguous samples where the visible stroke pattern supports more than one label. This means the CNN is not only improving the total number of correct predictions; it is shifting the remaining errors toward harder boundary cases.
+
 \begin{figure}[H]
   \centering
   \begin{subfigure}{0.48\linewidth}
@@ -198,7 +225,9 @@ The misclassified examples show that many remaining errors are understandable ev
 \end{figure}
 
 \subsection{Weights and Kernels}
-The MLP first-layer weights can be reshaped into $28\times28$ templates. These templates capture coarse global pixel patterns. The CNN kernels instead learn local stroke detectors, which is more suitable for digit images.
+The MLP first-layer weights can be reshaped into $28\times28$ templates. These templates capture coarse global pixel patterns. Some hidden units resemble broad digit prototypes or contrast masks, but each weight is tied to one absolute pixel location. If the same stroke moves slightly, a different set of weights must respond.
+
+The CNN kernels instead learn local stroke detectors. Each $3\times3$ kernel sees only a small neighborhood, so it cannot memorize a full digit by itself. Its strength comes from repeated application over the image. A useful kernel can detect corners, short edges, or local intensity transitions wherever they occur. This explains why CNN feature extraction is better aligned with handwritten digits: digits are global objects, but their evidence is composed of local reusable parts.
 
 \begin{figure}[H]
   \centering
@@ -217,9 +246,13 @@ The MLP first-layer weights can be reshaped into $28\times28$ templates. These t
 
 \section{Discussion}
 
-The project confirms several expected observations. First, a simple MLP can already solve MNIST reasonably well, reaching 94.59\% test accuracy. Second, optimization matters: changing from SGD to momentum under the same learning rate and scheduler improves MLP test accuracy by 4.42 percentage points. Third, CNNs are better suited for image classification because they exploit local spatial patterns and parameter sharing. After adding max pooling and using the same training setup as the momentum MLP, the CNN reaches 98.46\% test accuracy.
+The project confirms three connected observations. First, a simple MLP can solve MNIST reasonably well, reaching 94.59\% test accuracy, because MNIST images are centered, normalized, and visually clean. This makes the baseline meaningful but not sufficient: strong baseline performance does not imply the model has learned the most appropriate representation.
 
-The most informative additional direction is the error analysis. Accuracy alone hides the structure of mistakes. The confusion matrices and misclassified examples show that the hardest cases are not random; they are visually ambiguous digit pairs such as 4/9, 3/5, 2/7, and 5/8. This supports the conclusion that future improvements should target invariance to handwriting style, small deformations, and stroke ambiguity.
+Second, optimization strongly affects conclusions. Momentum improves the MLP from 92.38\% to 96.80\% under the same initial learning rate and schedule. Without this controlled optimization experiment, a weak MLP result could be mistaken for an architecture limitation. After momentum is added, the MLP becomes a stronger reference model.
+
+Third, CNNs are better suited for image classification because their assumptions match the data. MNIST labels depend on local strokes arranged into global digit shapes. Convolution captures local evidence, weight sharing reuses features across locations, and pooling adds tolerance to small translations. Under the same momentum training setup as the fair MLP, the CNN reaches 98.46\% test accuracy.
+
+The most informative additional direction is the error analysis. Accuracy alone hides the structure of mistakes. The confusion matrices and misclassified examples show that the hardest cases are visually ambiguous digit pairs such as 4/9, 3/5, 2/7, and 5/8. This supports a concrete improvement path: future work should target invariance to handwriting style, small deformations, and stroke ambiguity. Possible extensions include data augmentation, a second convolution layer, dropout or weight decay tuning, and a stricter parameter-matched MLP-vs-CNN comparison.
 
 \section*{Reproducibility Notes}
 All experiments use the provided MNIST dataset only. The fixed random seed is 309. The main scripts are:

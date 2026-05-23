@@ -49,18 +49,18 @@ def load_train_valid(dev_size=10000, train_limit=None, seed=309):
     return (train_imgs, train_labs), (valid_imgs, valid_labs)
 
 
-def build_model(model_name, weight_decay):
+def build_model(model_name, weight_decay, mlp_hidden, cnn_conv_channels, cnn_hidden_dim):
     if model_name == "mlp":
         lambdas = [weight_decay, weight_decay] if weight_decay > 0 else None
-        return nn.models.Model_MLP([28 * 28, 256, 10], "ReLU", lambdas)
+        return nn.models.Model_MLP([28 * 28, mlp_hidden, 10], "ReLU", lambdas)
     if model_name == "cnn":
         lambdas = [weight_decay, weight_decay, weight_decay] if weight_decay > 0 else None
         return nn.models.Model_CNN(
             input_shape=(1, 28, 28),
-            conv_channels=16,
+            conv_channels=cnn_conv_channels,
             kernel_size=3,
             pool_size=2,
-            hidden_dim=128,
+            hidden_dim=cnn_hidden_dim,
             lambda_list=lambdas,
         )
     raise ValueError(f"Unknown model: {model_name}")
@@ -90,7 +90,7 @@ def train_one(model_name, args):
         train_limit=args.train_limit,
         seed=args.seed,
     )
-    model = build_model(model_name, args.weight_decay)
+    model = build_model(model_name, args.weight_decay, args.mlp_hidden, args.cnn_conv_channels, args.cnn_hidden_dim)
     optimizer = build_optimizer(args.optimizer, args.lr, model, args.momentum)
     scheduler = build_scheduler(args.scheduler, optimizer, args.milestones, args.gamma)
     loss_fn = nn.op.MultiCrossEntropyLoss(model=model, max_classes=10)
@@ -136,6 +136,9 @@ def parse_args():
     parser.add_argument("--lr", type=float, default=0.06)
     parser.add_argument("--momentum", type=float, default=0.9)
     parser.add_argument("--weight-decay", type=float, default=0.0)
+    parser.add_argument("--mlp-hidden", type=int, default=256)
+    parser.add_argument("--cnn-conv-channels", type=int, default=16)
+    parser.add_argument("--cnn-hidden-dim", type=int, default=128)
     parser.add_argument("--milestones", type=int, nargs="*", default=[800, 2400, 4000])
     parser.add_argument("--gamma", type=float, default=0.5)
     parser.add_argument("--dev-size", type=int, default=10000)

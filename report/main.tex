@@ -11,6 +11,8 @@
 \usepackage{xcolor}
 \usepackage{caption}
 \usepackage{subcaption}
+\usepackage{tabularx}
+\usepackage{array}
 
 \hypersetup{
   colorlinks=true,
@@ -36,6 +38,24 @@
 \end{itemize}
 The GitHub repository excludes the MNIST dataset, trained weights, and large generated artifacts, following the project instructions.
 
+\section*{Requirement Checklist}
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\linewidth}{l>{\raggedright\arraybackslash}X}
+\toprule
+Project requirement & Where it is addressed \\
+\midrule
+MLP baseline & Section 1, including learning curve and test accuracy \\
+CNN implementation & Section 2, including manually implemented \texttt{conv2D} and max pooling \\
+Fair MLP-vs-CNN comparison & Section 2.2, with equal training setup and a parameter-matched MLP check \\
+Direction 1: Optimization & Section 3, momentum vs. SGD under controlled settings \\
+Direction 5: Error analysis and visualization & Section 4, confusion matrices, mistakes, weights, kernels \\
+Submission links & GitHub and ModelScope links above \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
 \section{MLP Baseline}
 
 \subsection{Implemented Operators}
@@ -60,7 +80,7 @@ The loss layer includes the softmax operation internally rather than expecting p
 \[
 \frac{\partial L}{\partial z_{i,c}}=\frac{p_{i,c}-\mathbf{1}\{c=y_i\}}{N},
 \]
-which is then propagated through the final linear layer and the earlier layers. I verified the core operators with unit tests covering output shapes, finite losses, gradient shapes, max-pool routing, and training-step parameter updates.
+which is then propagated through the final linear layer and the earlier layers. I verified the core operators with unit tests covering output shapes, finite losses, gradient shapes, max-pool routing, training-step parameter updates, and finite-difference gradient checks for Linear, softmax cross-entropy, and conv2D backward passes.
 
 \subsection{Model and Training}
 The baseline MLP uses the architecture
@@ -97,7 +117,9 @@ The final CNN architecture is
 \subsection{Fair Comparison}
 To compare the MLP and CNN under similar training conditions, both models are trained for 5 epochs with batch size 64, momentum gradient descent, initial learning rate 0.02, and the same MultiStepLR milestones. The same train/validation split, normalization, metric, loss, random seed, and evaluation script are used. The intended comparison target is the model architecture, so the optimizer family and schedule are fixed.
 
-The comparison is not a strict parameter-count match: the MLP has 203,530 trainable parameters, while the CNN has 347,690. The CNN has more parameters mainly because the pooled feature map has size $16\times13\times13=2704$ before the first fully connected layer. However, the CNN also has a stronger image prior. Its convolution filters are shared over locations, so the same local stroke detector can fire in many parts of an image. This is different from the MLP, where a stroke at two locations must be represented by different input weights.
+The comparison first fixes the training setup, then adds a stricter parameter-count check. The standard MLP has 203,530 trainable parameters, while the CNN has 347,690. The CNN has more parameters mainly because the pooled feature map has size $16\times13\times13=2704$ before the first fully connected layer. To test whether the CNN wins only because it has more parameters, I also trained a wider MLP with 438 hidden units. This parameter-matched MLP has 348,220 trainable parameters, nearly the same as the CNN, and uses the same optimizer, scheduler, batch size, epochs, seed, and data split.
+
+Even with this stricter control, the CNN remains better. The parameter-matched MLP reaches 97.01\% test accuracy, while the CNN reaches 98.46\%. This suggests that the CNN improvement is not explained only by parameter count. The CNN also has a stronger image prior. Its convolution filters are shared over locations, so the same local stroke detector can fire in many parts of an image. This is different from the MLP, where a stroke at two locations must be represented by different input weights.
 
 \begin{table}[H]
 \centering
@@ -105,31 +127,37 @@ The comparison is not a strict parameter-count match: the MLP has 203,530 traina
 \small
 \begin{tabular}{lcccc}
 \toprule
-Experiment & Optimizer & Epochs & Best val. acc. & Test acc. \\
+Experiment & Params & Optimizer & Best val. acc. & Test acc. \\
 \midrule
-MLP baseline & SGD + MultiStepLR & 5 & 0.9424 & 0.9459 \\
-MLP fair setting & Momentum + MultiStepLR & 5 & 0.9657 & 0.9680 \\
-CNN fair setting & Momentum + MultiStepLR & 5 & 0.9855 & 0.9846 \\
+MLP baseline & 203,530 & SGD + MultiStepLR & 0.9424 & 0.9459 \\
+MLP fair setting & 203,530 & Momentum + MultiStepLR & 0.9657 & 0.9680 \\
+MLP parameter-matched & 348,220 & Momentum + MultiStepLR & 0.9664 & 0.9701 \\
+CNN fair setting & 347,690 & Momentum + MultiStepLR & 0.9855 & 0.9846 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
 \begin{figure}[H]
   \centering
-  \begin{subfigure}{0.48\linewidth}
+  \begin{subfigure}{0.32\linewidth}
     \centering
     \includegraphics[width=\linewidth]{figures/mlp_momentum_curve.png}
     \caption{MLP fair setting}
   \end{subfigure}
-  \begin{subfigure}{0.48\linewidth}
+  \begin{subfigure}{0.32\linewidth}
+    \centering
+    \includegraphics[width=\linewidth]{figures/mlp_param_matched_curve.png}
+    \caption{MLP parameter-matched}
+  \end{subfigure}
+  \begin{subfigure}{0.32\linewidth}
     \centering
     \includegraphics[width=\linewidth]{figures/cnn_momentum_curve.png}
     \caption{CNN fair setting}
   \end{subfigure}
-\caption{Fair MLP-vs-CNN comparison under the same optimizer family, batch size, epoch count, and scheduler.}
+\caption{Fair MLP-vs-CNN comparison under the same optimizer family, batch size, epoch count, scheduler, and data split.}
 \end{figure}
 
-The CNN performs better than the MLP in both validation and test accuracy. The fair MLP reaches 96.80\% test accuracy, while the CNN reaches 98.46\%, an absolute improvement of 1.66 percentage points. This is meaningful on MNIST because many easy samples are already solved by both models; the gain comes mostly from harder samples with slight shifts, unusual stroke thickness, or incomplete loops.
+The CNN performs better than both MLPs in validation and test accuracy. Compared with the fair 256-hidden-unit MLP, the CNN improves test accuracy by 1.66 percentage points. Compared with the parameter-matched MLP, the CNN still improves test accuracy by 1.45 percentage points. This is meaningful on MNIST because many easy samples are already solved by all models; the gain comes mostly from harder samples with slight shifts, unusual stroke thickness, or incomplete loops.
 
 The result matches the expected inductive bias. Handwritten digits are made from local strokes: short horizontal bars, vertical stems, curves, corners, and closed loops. A convolution layer learns these local patterns with shared kernels, then reuses them across spatial positions. Max pooling reduces sensitivity to small translations and local deformations by keeping the strongest activation in each $2\times2$ region. The MLP instead receives a flat vector and treats each pixel coordinate independently. It can learn similar ideas, but it must encode them through dense global templates, which is less data-efficient for image structure.
 
@@ -143,12 +171,12 @@ Plain SGD updates parameters by
 \[
 \theta_{t+1}=\theta_t-\eta \nabla_\theta L_t.
 \]
-Momentum keeps a velocity term:
+Momentum keeps a gradient-accumulation term, matching the implementation in \path{codes/mynn/optimizer.py}:
 \[
-v_{t+1}=\mu v_t-\eta \nabla_\theta L_t,\qquad
-\theta_{t+1}=\theta_t+v_{t+1}.
+m_{t+1}=\mu m_t+\nabla_\theta L_t,\qquad
+\theta_{t+1}=\theta_t-\eta m_{t+1}.
 \]
-The velocity averages recent gradient directions. When consecutive mini-batches agree, updates become larger along the stable descent direction. When gradients oscillate, especially across narrow valleys, opposite components partly cancel. This is why momentum can improve both convergence speed and final validation accuracy even when the learning-rate schedule is unchanged.
+The accumulated term averages recent gradient directions. When consecutive mini-batches agree, updates become larger along the stable descent direction. When gradients oscillate, especially across narrow valleys, opposite components partly cancel. This is why momentum can improve both convergence speed and final validation accuracy even when the learning-rate schedule is unchanged.
 
 \begin{table}[H]
 \centering
@@ -250,7 +278,7 @@ The project confirms three connected observations. First, a simple MLP can solve
 
 Second, optimization strongly affects conclusions. Momentum improves the MLP from 92.38\% to 96.80\% under the same initial learning rate and schedule. Without this controlled optimization experiment, a weak MLP result could be mistaken for an architecture limitation. After momentum is added, the MLP becomes a stronger reference model.
 
-Third, CNNs are better suited for image classification because their assumptions match the data. MNIST labels depend on local strokes arranged into global digit shapes. Convolution captures local evidence, weight sharing reuses features across locations, and pooling adds tolerance to small translations. Under the same momentum training setup as the fair MLP, the CNN reaches 98.46\% test accuracy.
+Third, CNNs are better suited for image classification because their assumptions match the data. MNIST labels depend on local strokes arranged into global digit shapes. Convolution captures local evidence, weight sharing reuses features across locations, and pooling adds tolerance to small translations. Under the same momentum training setup as the fair MLP, the CNN reaches 98.46\% test accuracy. The parameter-matched MLP check strengthens this conclusion: increasing the MLP to roughly the same number of trainable parameters improves it only to 97.01\%, still below the CNN.
 
 The most informative additional direction is the error analysis. Accuracy alone hides the structure of mistakes. The confusion matrices and misclassified examples show that the hardest cases are visually ambiguous digit pairs such as 4/9, 3/5, 2/7, and 5/8. This supports a concrete improvement path: future work should target invariance to handwriting style, small deformations, and stroke ambiguity. Possible extensions include data augmentation, a second convolution layer, dropout or weight decay tuning, and a stricter parameter-matched MLP-vs-CNN comparison.
 
@@ -260,7 +288,20 @@ All experiments use the provided MNIST dataset only. The fixed random seed is 30
   \item \texttt{codes/test\_train.py}: training MLP and CNN models.
   \item \texttt{codes/test\_model.py}: evaluating saved checkpoints.
   \item \path{codes/weight_visualization.py}: confusion matrices, misclassified examples, MLP weights, and CNN kernels.
-  \item \texttt{codes/test\_core.py}: unit tests for the implemented operators.
+  \item \texttt{codes/test\_core.py}: unit tests and finite-difference gradient checks for the implemented operators.
 \end{itemize}
+
+The main commands are:
+\begin{verbatim}
+python3 -m pytest codes/test_core.py -q
+python3 codes/test_train.py --model mlp --epochs 5 --run-name mlp_baseline
+python3 codes/test_train.py --model mlp --epochs 5 --optimizer momentum \
+  --scheduler multistep --lr 0.02 --run-name mlp_fair_momentum
+python3 codes/test_train.py --model mlp --epochs 5 --optimizer momentum \
+  --scheduler multistep --lr 0.02 --mlp-hidden 438 \
+  --run-name mlp_param_matched_momentum
+python3 codes/test_train.py --model cnn --epochs 5 --optimizer momentum \
+  --scheduler multistep --lr 0.02 --run-name cnn_fair_momentum
+\end{verbatim}
 
 \end{document}

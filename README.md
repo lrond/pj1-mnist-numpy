@@ -28,6 +28,7 @@ python3 -m pytest codes/test_core.py -q
 ```bash
 python3 codes/test_train.py --model mlp --epochs 5 --run-name mlp_baseline
 python3 codes/test_train.py --model mlp --epochs 5 --optimizer momentum --scheduler multistep --lr 0.02 --run-name mlp_fair_momentum
+python3 codes/test_train.py --model mlp --epochs 5 --optimizer momentum --scheduler multistep --lr 0.02 --mlp-hidden 438 --run-name mlp_param_matched_momentum
 python3 codes/test_train.py --model cnn --epochs 5 --optimizer momentum --scheduler multistep --lr 0.02 --run-name cnn_fair_momentum
 ```
 

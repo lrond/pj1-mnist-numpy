@@ -40,6 +40,3 @@ python3 codes/test_model.py --model mlp --model-path codes/best_models/mlp_fair_
 python3 codes/test_model.py --model cnn --model-path codes/best_models/cnn_fair_momentum/best_model.pickle
 ```
 
-## Report
-
-The LaTeX report and Overleaf-ready zip are generated under `report/`.
